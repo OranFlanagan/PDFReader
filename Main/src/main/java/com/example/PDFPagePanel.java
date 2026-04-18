@@ -2,87 +2,118 @@ package com.example;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.image.BufferedImage;
 
 public class PDFPagePanel extends JPanel
 {
     private Image image;
-    private static final int SHADOW_SIZE = 8;
-    private static final int PAGE_PADDING = 24;
+    private String ocrText;
+
+    private static final int    OVERLAY_PADDING  = 12;
+    private static final int    OVERLAY_MAX_LINES = 6;
+    private static final Color  OVERLAY_BG       = new Color(0, 0, 0, 170);
+    private static final Color  OVERLAY_FG       = new Color(240, 240, 240);
+    private static final Font   OVERLAY_FONT     = new Font("Segoe UI", Font.PLAIN, 12);
+    
     public PDFPagePanel()
     {
-        setBackground(new Color(60, 60, 65));
+        setOpaque(true);
     }
 
     public void setImage(Image img)
     {
         this.image = img;
-        if(img != null)
+        if(image != null)
         {
-            int w = img.getWidth(this) + PAGE_PADDING * 2 + SHADOW_SIZE;
-            int h = img.getHeight(this) + PAGE_PADDING * 2 + SHADOW_SIZE;
-            setPreferredSize(new Dimension(w, h));
-            revalidate();
+            setPreferredSize(new Dimension(
+                image.getWidth(this) + 40,
+                image.getHeight(this) + 40
+            ));
         }
+    }
+
+    public void setOcrText(String text)
+    {
+        this.ocrText = (ocrText != null && !ocrText.isBlank()) ? text.trim() : null;
     }
 
     @Override protected void paintComponent(Graphics g)
     {
        super.paintComponent(g);
+       
        if(image == null)
        {
-            paintPlaceholder(g); 
-            return;
+           return;
        }
 
        Graphics2D g2 = (Graphics2D) g.create();
        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
        g2.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
-       g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
 
-       int imgW = image.getWidth(null);
-       int imgH = image.getHeight(null);
-       int x = (getWidth() - imgW) / 2;
-       int y = (getHeight() - imgH) / 2;
-       if(y < PAGE_PADDING) y = PAGE_PADDING;
+       int imgW = image.getWidth(this);
+       int imgH = image.getHeight(this);
+       int x = Math.max(20,(getWidth() - imgW) / 2);
+       int y = Math.max(20,(getHeight() - imgH) / 2);
 
-       for(int i = SHADOW_SIZE; i > 0; i--)
+
+       g2.setColor(new Color(0,0,0,80));
+       g2.fillRect(x + 4, y + 4, imgW, imgH);
+
+       g2.drawImage(image, x, y, this);
+
+       if(ocrText != null)
        {
-           int alpha = (int)(180 * (1 - (float) i / SHADOW_SIZE));
-           g2.setColor(new Color(0, 0, 0, alpha));
-           g2.fillRoundRect(x + i, y + i, imgW, imgH, imgW, imgH);
+             paintPlaceholder(g2, x, y, imgW, imgH);
        }
 
-       g2.setColor(Color.WHITE);
-       g2.fillRect(x, y, imgW, imgH);
-       g2.drawImage(image, x, y, null);
-       g2.setColor(new Color(0,0,0,80));
-       g2.drawRect(x, y, imgW - 1, imgH - 1);
        g2.dispose();
     }
 
-    private void paintPlaceholder(Graphics g)
+    private void paintPlaceholder(Graphics2D g2, int imgX, int imgY, int imgW, int imgH)
     {
-        Graphics2D g2 = (Graphics2D) g.create();
-        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        int boxW = 300, boxH = 400;
-        int bx = (getWidth() - boxW) / 2;
-        int by = (getHeight() - boxH) / 2;
-
-        g2.setColor(new Color(80,80,85));
-        g2.setStroke(new BasicStroke(2, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND, 0 , new float[]{10, 8}, 0));
-        g2.drawRoundRect(bx, by, boxW, boxH, 12, 12);
-        g2.setStroke(new BasicStroke(3, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        g2.setColor(new Color(100,100,108));
-        int lx = bx +40, lw = boxW - 80;
-        g2.drawLine(lx, by + 120, lx + lw, by + 120);
-        g2.drawLine(lx, by + 155, lx + lw, by + 155);
-        g2.drawLine(lx, by + 190, lx + lw * 2 / 3, by + 190);
-
-        g2.setColor(new Color(130, 130, 140));
-        g2.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        g2.setFont(OVERLAY_FONT);
         FontMetrics fm = g2.getFontMetrics();
-        String msg = "Open a PDF or drag one here";
-        g2.drawString(msg, (getWidth() - fm.stringWidth(msg)) / 2, by + boxH - 30);
-        g2.dispose();
+        int lineH = fm.getHeight();
+
+        String[] rawLines = ocrText.split("\\r?\\n");
+        String[] lines = new String[Math.min(rawLines.length, OVERLAY_MAX_LINES)];
+        System.arraycopy(rawLines, 0, lines, 0, lines.length);
+        boolean truncated = rawLines.length > OVERLAY_MAX_LINES;
+
+        int overlayH = OVERLAY_PADDING * 2 + lines.length * lineH +(truncated ? lineH : 0);
+        int overlayY = imgY + imgH - overlayH;
+
+        g2.setColor(OVERLAY_BG);
+        g2.fillRect(imgX, overlayY, imgW, overlayH);
+
+        g2.setColor(OVERLAY_FG);
+        int textY = overlayY + OVERLAY_PADDING + fm.getAscent();
+        
+        for(String line : lines)
+        {
+            String displayed = clipText(g2, fm, line, imgW - OVERLAY_PADDING * 2);  
+            g2.drawString(displayed, imgX + OVERLAY_PADDING, textY);
+            textY += lineH;
+        }
+
+        if(truncated)
+        {
+            g2.setColor(new Color(180,180,180));
+            g2.drawString("... (text continues)", imgX + OVERLAY_PADDING, textY);
+        }
     }
+
+        private String clipText(Graphics2D g2, FontMetrics fm, String text, int maxWidth)
+        {
+            if(fm.stringWidth(text) <= maxWidth)
+            {
+                return text;
+            }
+            String ellipsis = "...";
+            while(!text.isEmpty() && fm.stringWidth(text + ellipsis) > maxWidth)
+            {
+                text = text.substring(0, text.length() - 1);
+            }  
+            return text + ellipsis; 
+        }
 }
