@@ -209,7 +209,7 @@ public class PDFReaderApp extends JFrame
         JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         right.setOpaque(false);
  
-        prevBtn = iconButton("←");
+        prevBtn = iconButton("<");
         prevBtn.addActionListener(e -> goToPage(currentPage - 1));
  
         pageField = new JTextField("0", 4);
@@ -225,7 +225,7 @@ public class PDFReaderApp extends JFrame
         pageLabel.setForeground(new Color(180, 180, 180));
         pageLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
  
-        nextBtn = iconButton("→");
+        nextBtn = iconButton(">");
         nextBtn.addActionListener(e -> goToPage(currentPage + 1));
  
         right.add(prevBtn);
@@ -307,6 +307,29 @@ public class PDFReaderApp extends JFrame
         return btn;
     }
 
+    private static Font crossPlatformIconFont(int size)
+    {
+        String testGlyphs = "\u2190\u2192+-";
+        String[] candidates = {
+            "Segoe UI Symbol", 
+            "Apple Symbols",
+            "Arial Unicode MS", 
+            "Noto Sans Symbols", 
+            "Symbola", 
+            "DejaVu Sans"
+        };
+
+        for(String name : candidates)
+        {
+            Font font = new Font(name, Font.BOLD, size);
+            if(font.canDisplayUpTo(testGlyphs) == -1)
+            {
+                return font;
+            }
+        }
+        return new Font("Dialog", Font.BOLD, size);
+    }
+
     private MouseAdapter hoverEffect(JButton btn, Color normal, Color hover)
     {
         return new MouseAdapter()
@@ -330,7 +353,7 @@ public class PDFReaderApp extends JFrame
                     { 
                         return false;
                     }
-                switch (e.getID())
+                switch (e.getKeyCode())
                 {
                     case KeyEvent.VK_LEFT: 
                     case KeyEvent.VK_PAGE_UP:
@@ -386,20 +409,21 @@ public class PDFReaderApp extends JFrame
               progressBar.setVisible(false);
               try
               {
-                if(pdfDocument != null)
-                {
-                    pdfDocument.close();
-                    pdfRenderer = null;
+               if (pdfDocument != null)
+                { 
+                pdfDocument.close(); 
+                pdfRenderer = null; 
                 }
+
                 pdfDocument = get();
                 pdfRenderer = new PDFRenderer(pdfDocument);
                 currentPage = 0;
-                zoomLevel = 1.0f;
+                zoomLevel   = 1.0f;
                 zoomSlider.setValue(100);
                 fileLabel.setText(file.getName());
-                setTitle("PDF Reader - " + file.getName());
+                setTitle("PDF Reader – " + file.getName());
                 updateControls();
-
+ 
                 new Thread(() -> {
                     analysePages();
                     SwingUtilities.invokeLater(() -> renderCurrentPage());
@@ -493,7 +517,7 @@ public class PDFReaderApp extends JFrame
             return;
         }
         int total = pdfDocument.getNumberOfPages();
-        if(page >= 0 && page < total)
+        if(page < 0 && page >= total)
         {
             return;
         }
@@ -550,11 +574,7 @@ public class PDFReaderApp extends JFrame
             @Override protected RenderResult doInBackground() throws Exception
             {  
                 BufferedImage image = pdfRenderer.renderImage(pageIndex, zoom);
-                String ocrText = null;
-                if(scanned && ocrEnabled)
-                {
-                    ocrText = runOCR(image);
-                }
+                String ocrText = (scanned && ocrEnabled) ? runOCR(image) : null;
                 return new RenderResult(image, ocrText, scanned);
             }
            @Override protected void done() 
