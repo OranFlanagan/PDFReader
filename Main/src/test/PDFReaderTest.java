@@ -29,5 +29,16 @@ public class PDFReaderTest
             }
             return f;
         }
+
+        static File makeBlankPdf() throws Exception
+        {
+            File f = Files.createTempFile(tempDir, "blank-", "pdf").toFile();
+            try(PDDocument doc = new PDDocument())
+            {
+                doc.addPage(new PDPage(PDRectanglge.A4));
+                doc.save(f);
+            }
+            return f;
+        }
     }
 }
