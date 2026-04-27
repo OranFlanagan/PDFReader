@@ -23,6 +23,7 @@ public class PDFReaderApp extends JFrame
     private JButton prevBtn, nextBtn, openBtn, zoomInBtn, zoomOutBtn, exportCsvBtn;
     private JTextField pageField;
     private JSlider zoomSlider;
+    private JLabel zoomPercentLabel;
     private JProgressBar progressBar;
     private JLabel ocrStatusLabel;
 
@@ -166,11 +167,11 @@ public class PDFReaderApp extends JFrame
  
         fileLabel = new JLabel("No file loaded");
         fileLabel.setForeground(new Color(180, 180, 180));
-        fileLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        fileLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
         left.add(fileLabel);
  
         ocrStatusLabel = new JLabel();
-        ocrStatusLabel.setFont(new Font("Segoe UI", Font.BOLD, 11));
+        ocrStatusLabel.setFont(new Font("SansSerif", Font.BOLD, 11));
         ocrStatusLabel.setBorder(new EmptyBorder(2, 8, 2, 8));
         ocrStatusLabel.setOpaque(true);
         ocrStatusLabel.setVisible(false);
@@ -187,29 +188,49 @@ public class PDFReaderApp extends JFrame
         zoomSlider.setOpaque(false);
         zoomSlider.setPreferredSize(new Dimension(140, 24));
         zoomSlider.addChangeListener(e -> {
+            zoomLevel = zoomSlider.getValue() / 100f;
+            updateZoomLabel();
+
             if (!zoomSlider.getValueIsAdjusting())
             {
-                zoomLevel = zoomSlider.getValue() / 100f;
                 renderCurrentPage();
             }
         });
  
+        zoomSlider.addMouseListener(new MouseAdapter() 
+        {
+            public void mouseCLicked(MouseEvent e)
+            {
+                if(e.getClickCount() == 2)
+                {
+                    resetZoom();
+                }
+            }
+        });
         zoomInBtn = iconButton("+");
         zoomInBtn.addActionListener(e -> adjustZoom(ZOOM_STEP));
  
+        zoomPercentLabel = new JLabel("100%");
+        zoomPercentLabel.setForeground(new Color(180, 180, 180));
+        zoomPercentLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        zoomPercentLabel.setPreferredSize(new Dimension(40, 16));
+        zoomPercentLabel.setHorizontalAlignment(SwingConstants.LEFT);
+        zoomPercentLabel.setToolTipText("Double-click the slider to reset to 100%");
+        
         JLabel zoomLabel = new JLabel("Zoom:");
         zoomLabel.setForeground(new Color(180, 180, 180));
-        zoomLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        zoomLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
         centre.add(zoomLabel);
         centre.add(zoomOutBtn);
         centre.add(zoomSlider);
         centre.add(zoomInBtn);
+        centre.add(zoomPercentLabel);
  
         // --- right: navigation ---
         JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         right.setOpaque(false);
  
-        prevBtn = iconButton("<");
+        prevBtn = iconButton("<-");
         prevBtn.addActionListener(e -> goToPage(currentPage - 1));
  
         pageField = new JTextField("0", 4);
@@ -218,12 +239,12 @@ public class PDFReaderApp extends JFrame
         pageField.setForeground(Color.WHITE);
         pageField.setCaretColor(Color.WHITE);
         pageField.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(new Color(90, 90, 95)), new EmptyBorder(2, 4, 2, 4)));
-        pageField.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        pageField.setFont(new Font("SansSerif", Font.PLAIN, 12));
         pageField.addActionListener(e -> jumpToPage());
  
         pageLabel = new JLabel("/0");
         pageLabel.setForeground(new Color(180, 180, 180));
-        pageLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        pageLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
  
         nextBtn = iconButton(">");
         nextBtn.addActionListener(e -> goToPage(currentPage + 1));
@@ -243,6 +264,9 @@ public class PDFReaderApp extends JFrame
     {
         pagePanel = new PDFPagePanel();
         pagePanel.setBackground(CANVAS_BG);
+        pagePanel.setCursor(Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR));
+        setUpDragToScroll(pagePanel);
+
         scrollPane = new JScrollPane(pagePanel);
         scrollPane.setBackground(CANVAS_BG);
         scrollPane.getViewport().setBackground(CANVAS_BG);
@@ -261,6 +285,40 @@ public class PDFReaderApp extends JFrame
         return scrollPane;
     }
 
+    private void setUpDragToScroll(JComponent target)
+    {
+        final Point[] dragOrigin = {null};
+        target.addMouseListener(new MouseAdapter() 
+        {
+            public void mousePressed(MouseEvent e)
+            {
+                dragOrigin[0] = e.getPoint();
+            }
+            public void mouseReleased(MouseEvent e)
+            {
+                dragOrigin[0] = null;
+            }
+        });
+        target.addMouseMotionListener(new MouseMotionAdapter()
+        {
+            public void mouseDragged(MouseEvent e)
+            {
+                if(dragOrigin[0] == null)
+                {
+                    return;
+                }
+
+                JScrollBar h = scrollPane.getHorizontalScrollBar();
+                JScrollBar v = scrollPane.getVerticalScrollBar();
+                int dx = dragOrigin[0].x - e.getX();
+                int dy = dragOrigin[0].y - e.getY();
+                h.setValue(h.getValue() + dx);
+                v.setValue(v.getValue() + dy);
+
+                dragOrigin[0] = e.getPoint();
+            }
+        });
+    }
     private JPanel buildStatusBar()
     {
         JPanel bar = new JPanel(new BorderLayout(10,0));
@@ -268,12 +326,15 @@ public class PDFReaderApp extends JFrame
         bar.setBorder(new EmptyBorder(4, 10, 4,10));
         JLabel hint = new JLabel("Ctrl + Scroll to zoom |  ← → to navigate  | Drag and drop a PDF file");
         hint.setForeground(new Color(130,130,130));
-        hint.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+        hint.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        
         progressBar = new JProgressBar();
         progressBar.setPreferredSize(new Dimension(140, 14));
         progressBar.setVisible(false);
         progressBar.setBackground(new Color(50, 50, 54));
         progressBar.setForeground(ACCENT);
+        progressBar.setStringPainted(true);
+
         bar.add(hint, BorderLayout.WEST);
         bar.add(progressBar, BorderLayout.EAST);
         return bar;
@@ -286,7 +347,7 @@ public class PDFReaderApp extends JFrame
         btn.setForeground(BTN_FG);
         btn.setFocusPainted(false);
         btn.setBorderPainted(false);
-        btn.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        btn.setFont(new Font("SansSerif", Font.PLAIN, 12));
         btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         btn.setBorder(new EmptyBorder(6, 14, 6, 14));
         btn.addMouseListener(hoverEffect(btn, bg, bg.brighter()));
@@ -296,13 +357,13 @@ public class PDFReaderApp extends JFrame
     private JButton iconButton(String text)
     {
         JButton btn = new JButton(text);
-        btn.setBackground(new Color(70,70,75));
+        Color base = new Color(70,70,75);
+        btn.setBackground(base);
         btn.setForeground(BTN_FG);
         btn.setFocusPainted(false);
         btn.setBorderPainted(false);
-        btn.setFont(new Font("Segoe UI", Font.BOLD, 13));
-        btn.setPreferredSize(new Dimension(32, 28));
-        Color base = new Color(70,70,75);
+        btn.setFont(crossPlatformIconFont(13));
+        btn.setPreferredSize(new Dimension(36, 28));
         btn.addMouseListener(hoverEffect(btn, base, new Color(90, 90, 95)));
         return btn;
     }
@@ -311,7 +372,7 @@ public class PDFReaderApp extends JFrame
     {
         String testGlyphs = "\u2190\u2192+-";
         String[] candidates = {
-            "Segoe UI Symbol", 
+            "SansSerif Symbol", 
             "Apple Symbols",
             "Arial Unicode MS", 
             "Noto Sans Symbols", 
@@ -410,18 +471,18 @@ public class PDFReaderApp extends JFrame
               try
               {
                if (pdfDocument != null)
-                { 
+               { 
                 pdfDocument.close(); 
                 pdfRenderer = null; 
-                }
+               }
 
                 pdfDocument = get();
                 pdfRenderer = new PDFRenderer(pdfDocument);
                 currentPage = 0;
-                zoomLevel   = 1.0f;
+                zoomLevel   = calcFitToWidthZoom();
                 zoomSlider.setValue(100);
                 fileLabel.setText(file.getName());
-                setTitle("PDF Reader – " + file.getName());
+                setTitle("PDF Reader -" + file.getName());
                 updateControls();
  
                 new Thread(() -> {
@@ -535,9 +596,9 @@ public class PDFReaderApp extends JFrame
         }
         try
         {
-            int page = Integer.parseInt(pageField.getText().trim()) - 1;
-            goToPage(page);
-        } catch (NumberFormatException ex)
+            goToPage(Integer.parseInt(pageField.getText().trim()) - 1);
+        } 
+        catch (NumberFormatException ex)
         {
             updateControls();
         }
@@ -552,15 +613,59 @@ public class PDFReaderApp extends JFrame
        }
        zoomLevel = newZoom;
        zoomSlider.setValue(Math.round(zoomLevel * 100));
+       updateZoomLabel();
        renderCurrentPage();
     }
 
+    private void resetZoom()
+    {
+        zoomLevel = 1.0f;
+        zoomSlider.setValue(100);
+        updateZoomLabel();
+        renderCurrentPage();
+    }
+
+    private void updateZoomLabel()
+    {
+        if(zoomPercentLabel != null)
+        {
+            zoomPercentLabel.setText(Math.round(zoomLevel *100) + "%");
+        }
+    }
+
+    private float calcFitToWidthZoom()
+    {
+        if (pdfDocument == null)
+        {
+             return 1.0f;
+        }
+
+        try
+        {
+            org.apache.pdfbox.pdmodel.PDPage page = pdfDocument.getPage(0);
+            float pageWidthPt = page.getMediaBox().getWidth(); 
+            int viewportWidth = scrollPane.getViewport().getWidth();
+
+            if (viewportWidth <= 0)
+            {
+                viewportWidth = scrollPane.getPreferredSize().width;
+            }
+            int margin = 48;
+            float fit = (viewportWidth - margin) / pageWidthPt;
+            return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, fit));
+        }
+        catch (Exception ex)
+        {
+            return 1.0f;
+        }
+    }
     private void renderCurrentPage()
     {
         if(pdfDocument == null || pdfRenderer == null)
         {
             return;
         }
+
         progressBar.setVisible(true);
         progressBar.setIndeterminate(true);
         progressBar.setString("Rendering page...");
@@ -577,6 +682,7 @@ public class PDFReaderApp extends JFrame
                 String ocrText = (scanned && ocrEnabled) ? runOCR(image) : null;
                 return new RenderResult(image, ocrText, scanned);
             }
+
            @Override protected void done() 
            {
             progressBar.setVisible(false);
@@ -646,6 +752,11 @@ public class PDFReaderApp extends JFrame
         {
             pageField.setText("0");
             pageLabel.setText("/0");
+
+            if(zoomPercentLabel != null)
+            {
+                zoomPercentLabel.setText("100%");
+            }
         }
     }
 
