@@ -58,6 +58,8 @@ public class PDFReaderApp extends JFrame
     private boolean ocrEnabled  = false;
     private PDFtoCsvExporter csvExporter;
 
+    private int loadingCount = 0;
+
     private static final float ZOOM_STEP = 0.25f;
     private static final float ZOOM_MIN  = 0.25f;
     private static final float ZOOM_MAX  = 4.0f;
@@ -93,9 +95,14 @@ public class PDFReaderApp extends JFrame
         {
             return null;
         }
-        JScrollPane sp = (JScrollPane) tabbedPane.getComponent(idx);
-        return(PdfTab) sp.getClientProperty("tab");
+        Component c = tabbedPane.getComponentAt(idx);
+        if(!(c instanceof JScrollPane))
+        {
+            return null;
+        }
+        return(PdfTab) ((JScrollPane) c).getClientProperty("tab");
     }
+
     private void initTesseract()
     {
         try
@@ -152,8 +159,9 @@ public class PDFReaderApp extends JFrame
         {
             return tesseract.doOCR(image);
         }
-        catch (TesseractException ex)
+        catch (Throwable ex)
         {
+            System.err.println("OCR skipped: " + ex.getMessage());
             return null;
         }
     }
@@ -534,16 +542,21 @@ public class PDFReaderApp extends JFrame
     {
         for(int i = 0; i < tabbedPane.getTabCount(); i++)
         {
-            PdfTab existing = (PdfTab)((JScrollPane) tabbedPane.getComponentAt(i)).getClientProperty("tab");
-            
-            if(existing.file.equals(file))
+            Component c = tabbedPane.getComponentAt(i);
+            if(!(c instanceof JScrollPane))
+            {
+                continue;
+            }
+
+            PdfTab existing = (PdfTab)((JScrollPane) c).getClientProperty("tab");
+            if(existing != null && existing.file.equals(file))
             {
                 tabbedPane.setSelectedIndex(i);
                 return;
             }
         }
 
-        PdfTab     tab    = new PdfTab(file);
+        PdfTab tab = new PdfTab(file);
         JScrollPane canvas = buildTabCanvas(tab);
  
         tabbedPane.addTab(file.getName(), canvas);
@@ -551,6 +564,7 @@ public class PDFReaderApp extends JFrame
         tabbedPane.setTabComponentAt(tabIndex, buildTabHeader(file.getName(), tab));
         tabbedPane.setSelectedIndex(tabIndex);
  
+        loadingCount++;
         progressBar.setVisible(true);
         progressBar.setIndeterminate(true);
         progressBar.setString("Loading " + file.getName() + "...");
@@ -565,7 +579,13 @@ public class PDFReaderApp extends JFrame
 
             @Override protected void done()
             {
-              progressBar.setVisible(false);
+              loadingCount--;
+              if(loadingCount <= 0)
+              {
+                loadingCount = 0;
+                progressBar.setVisible(false);
+              }
+
               try
               {
                 tab.document   = get();
@@ -587,7 +607,12 @@ public class PDFReaderApp extends JFrame
               } 
               catch (Exception ex)
               {
-                showError("Failed to load PDF: ", ex);
+                showError("Failed to load PDF: " + file.getName(), ex);
+                int idx = indexOfTab(tab);
+                if(idx >= 0)
+                {
+                    tabbedPane.removeTabAt(idx);
+                }
                 setTitle("PDF Reader");
               }
             }
@@ -632,7 +657,10 @@ public class PDFReaderApp extends JFrame
     private void closeActiveTab()
     {
         PdfTab tab = activeTab();
-        if (tab != null) closeTab(tab);
+        if (tab != null)
+        {
+            closeTab(tab);
+        }
     }
  
     private void closeTab(PdfTab tab)
@@ -665,8 +693,11 @@ public class PDFReaderApp extends JFrame
     {
         for (int i = 0; i < tabbedPane.getTabCount(); i++)
         {
-            JScrollPane sp = (JScrollPane) tabbedPane.getComponentAt(i);
-            if (sp.getClientProperty("tab") == tab) return i;
+            Component c = tabbedPane.getComponent(i);
+            if(c instanceof JScrollPane sp && sp.getClientProperty("tab") == tab)
+            {
+                return i;
+            }
         }
         return -1;
     }
@@ -674,19 +705,23 @@ public class PDFReaderApp extends JFrame
     private void exportToCsv()
     {
         PdfTab tab = activeTab();
-        if (tab == null || !tab.hasDocument()) return;
+        if (tab == null || !tab.hasDocument())
+        {
+            return;
+        }
  
         JFileChooser chooser = new JFileChooser();
         chooser.setDialogTitle("Save CSV File");
-        chooser.setFileFilter(
-            new javax.swing.filechooser.FileNameExtensionFilter("CSV Files (*.csv)", "csv"));
+        chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("CSV Files (*.csv)", "csv"));
         chooser.setSelectedFile(new File(tab.file.getName().replaceAll("(?i)\\.pdf$", "") + ".csv"));
  
         if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
  
         File dest = chooser.getSelectedFile();
         if (!dest.getName().toLowerCase().endsWith(".csv"))
+        {
             dest = new File(dest.getAbsolutePath() + ".csv");
+        }
  
         final File finalDest = dest;
         final int  total     = tab.document.getNumberOfPages();
@@ -719,11 +754,12 @@ public class PDFReaderApp extends JFrame
                 try
                 {
                     get();
-                    JOptionPane.showMessageDialog(PDFReaderApp.this,
-                        "CSV saved to:\n" + finalDest.getAbsolutePath(),
-                        "Export Complete", JOptionPane.INFORMATION_MESSAGE);
+                    JOptionPane.showMessageDialog(PDFReaderApp.this, "CSV saved to:\n" + finalDest.getAbsolutePath(), "Export Complete", JOptionPane.INFORMATION_MESSAGE);
                 }
-                catch (Exception ex) { showError("Export failed", ex); }
+                catch (Exception ex) 
+                { 
+                    showError("Export failed", ex);
+                }
             }
         };
         worker.execute();
@@ -798,7 +834,11 @@ public class PDFReaderApp extends JFrame
 
     private float calcFitToWidthZoom(PdfTab tab)
     {
-        if (!tab.hasDocument()) return 1.0f;
+        if (!tab.hasDocument())
+        {
+            return 1.0f;
+        }
+
         try
         {
             float pageWidthPt = tab.document.getPage(0).getMediaBox().getWidth();
@@ -810,11 +850,18 @@ public class PDFReaderApp extends JFrame
             float fit = (viewWidth - 48) / pageWidthPt;
             return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, fit));
         }
-        catch (Exception ex) { return 1.0f; }
+
+        catch (Exception ex)
+        { 
+            return 1.0f;
+        }
     }
     private void renderCurrentPage(PdfTab tab)
     {
-     if (!tab.hasDocument()) return;
+        if (!tab.hasDocument())
+        {
+            return;
+        }
  
         progressBar.setVisible(true);
         progressBar.setIndeterminate(true);
@@ -891,9 +938,9 @@ public class PDFReaderApp extends JFrame
 
     private void updateControls()
     {
-        PdfTab  tab    = activeTab();
+        PdfTab tab = activeTab();
         boolean hasDoc = tab != null && tab.hasDocument();
-        int     total  = hasDoc ? tab.document.getNumberOfPages() : 0;
+        int total = hasDoc ? tab.document.getNumberOfPages() : 0;
  
         prevBtn.setEnabled(hasDoc && tab.currentPage > 0);
         nextBtn.setEnabled(hasDoc && tab.currentPage < total - 1);
