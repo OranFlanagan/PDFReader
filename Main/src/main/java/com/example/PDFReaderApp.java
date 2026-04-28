@@ -4,33 +4,50 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.awt.event.*;
+
+import java.awt.image.BufferedImage;
+import java.io.File;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
-import java.io.File;
-
+import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.pdfbox.rendering.PDFRenderer;
-
+import net.sourceforge.tess4j.Tesseract;
+import net.sourceforge.tess4j.TesseractException;
+ 
 public class PDFReaderApp extends JFrame
 {
-     private PDFPagePanel pagePanel;
+    private PDFPagePanel pagePanel;
     private JScrollPane scrollPane;
     private JLabel pageLabel;
     private JLabel fileLabel;
-    private JButton prevBtn, nextBtn, openBtn, zoomInBtn, zoomOutBtn;
+    private JButton prevBtn, nextBtn, openBtn, zoomInBtn, zoomOutBtn, exportCsvBtn;
     private JTextField pageField;
     private JSlider zoomSlider;
+    private JLabel zoomPercentLabel;
     private JProgressBar progressBar;
+    private JLabel ocrStatusLabel;
 
     private PDDocument pdfDocument;
     private PDFRenderer pdfRenderer;
     private int currentPage = 0;
     private float zoomLevel = 1.0f;
 
+
+    private Tesseract tesseract;
+    private boolean ocrEnabled = false;
+    private boolean[] pageIsScanned;
+
+    private PDFtoCSVExporter cvsExporter;
+
     private static final float ZOOM_STEP = 0.25f;
     private static final float ZOOM_MIN  = 0.25f;
     private static final float ZOOM_MAX  = 4.0f;
+    private static final int OCR_TEXT_THRESHOLD = 10;
+
     private static final Color TOOLBAR_BG = new Color(45, 45, 48);
     private static final Color ACCENT     = new Color(0, 120, 215);
+    private static final Color OCR_ACCENT = new Color(100, 100, 0);
+    private static final Color CSV_ACCENT = new Color(100, 150, 0);
     private static final Color BTN_FG     = Color.WHITE;
     private static final Color STATUS_BG  = new Color(37, 37, 38);
     private static final Color CANVAS_BG  = new Color(60, 60, 65);
@@ -41,12 +58,82 @@ public class PDFReaderApp extends JFrame
         setDefaultCloseOperation(EXIT_ON_CLOSE);
         setMinimumSize(new Dimension(800,600));
         setPreferredSize(new Dimension(1100,800));
+        initTesseract();
+        cvsExporter = new PDFtoCSVExporter(tesseract);
         initUI();
         pack();
         setLocationRelativeTo(null);
         setVisible(true);
     }
 
+    private void initTesseract()
+    {
+        try
+        {
+            tesseract = new Tesseract();
+            String tessPrefix = System.getenv("TESSDATA_PREFIX");
+            if(tessPrefix != null && !tessPrefix.isBlank())
+            {
+                tesseract.setDatapath(tessPrefix);
+            }
+            tesseract.setLanguage("eng");
+            ocrEnabled = true;
+        }
+        catch (Exception ex)
+        {
+            tesseract = null;
+            ocrEnabled = false;
+        }
+    }
+    private boolean isScannedPage(int pageIndex)
+    {
+        if(pdfDocument == null && pageIndex < pageIsScanned.length)
+        {
+            return pageIsScanned[pageIndex];
+        }
+        return false;
+    }
+
+    private void analysePages()
+    {
+        if(pdfDocument == null)
+        {
+            return;
+        }
+        int total = pdfDocument.getNumberOfPages();
+        pageIsScanned = new boolean[total];
+        try
+        {
+            PDFTextStripper stripper = new PDFTextStripper();
+            for(int i = 0; i < total; i++)
+            {
+                stripper.setStartPage(i + 1);
+                stripper.setEndPage(i + 1);
+                String text = stripper.getText(pdfDocument).trim();
+                pageIsScanned[i] = text.length() < OCR_TEXT_THRESHOLD;
+            }
+        }
+        catch(Exception ignored)
+        {
+
+        }
+    }
+
+    private String runOCR(BufferedImage image)
+    {
+        if (!ocrEnabled || tesseract == null)
+        { 
+            return null;
+        }
+        try
+        {
+            return tesseract.doOCR(image);
+        }
+        catch (TesseractException ex)
+        {
+            return null;
+        }
+    }
     private void initUI()
     {
        setLayout(new BorderLayout());
@@ -55,76 +142,121 @@ public class PDFReaderApp extends JFrame
        add(buildCanvas(), BorderLayout.CENTER);
        add(buildStatusBar(), BorderLayout.SOUTH);
        setupKeyBindings();
-       setupDragAndDrop();
        updateControls();
     }
 
     private JPanel buildToolbar()
     {
-        JPanel toolbar = new JPanel(new FlowLayout());
+        JPanel toolbar = new JPanel(new BorderLayout());
         toolbar.setBackground(TOOLBAR_BG);
         toolbar.setBorder(new EmptyBorder(6, 10, 6, 10));
+ 
+        // --- left ---
         JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
         left.setOpaque(false);
+ 
         openBtn = styledButton("Open PDF", ACCENT);
         openBtn.addActionListener(e -> openFile());
         left.add(openBtn);
+ 
+        exportCsvBtn = styledButton("Export CSV", CSV_ACCENT);
+        exportCsvBtn.setToolTipText("Extract text from every page and save as a CSV file");
+        exportCsvBtn.addActionListener(e -> exportToCsv());
+        exportCsvBtn.setEnabled(false);
+        left.add(exportCsvBtn);
+ 
         fileLabel = new JLabel("No file loaded");
         fileLabel.setForeground(new Color(180, 180, 180));
-        fileLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        fileLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
         left.add(fileLabel);
-
+ 
+        ocrStatusLabel = new JLabel();
+        ocrStatusLabel.setFont(new Font("SansSerif", Font.BOLD, 11));
+        ocrStatusLabel.setBorder(new EmptyBorder(2, 8, 2, 8));
+        ocrStatusLabel.setOpaque(true);
+        ocrStatusLabel.setVisible(false);
+        left.add(ocrStatusLabel);
+ 
+        // --- centre: zoom ---
         JPanel centre = new JPanel(new FlowLayout(FlowLayout.CENTER, 6, 0));
         centre.setOpaque(false);
+ 
         zoomOutBtn = iconButton("-");
         zoomOutBtn.addActionListener(e -> adjustZoom(-ZOOM_STEP));
+ 
         zoomSlider = new JSlider(25, 400, 100);
         zoomSlider.setOpaque(false);
         zoomSlider.setPreferredSize(new Dimension(140, 24));
         zoomSlider.addChangeListener(e -> {
-            if(!zoomSlider.getValueIsAdjusting())
+            zoomLevel = zoomSlider.getValue() / 100f;
+            updateZoomLabel();
+
+            if (!zoomSlider.getValueIsAdjusting())
             {
-                zoomLevel = zoomSlider.getValue() / 100f;
                 renderCurrentPage();
+            }
+        });
+ 
+        zoomSlider.addMouseListener(new MouseAdapter() 
+        {
+            public void mouseCLicked(MouseEvent e)
+            {
+                if(e.getClickCount() == 2)
+                {
+                    resetZoom();
+                }
             }
         });
         zoomInBtn = iconButton("+");
         zoomInBtn.addActionListener(e -> adjustZoom(ZOOM_STEP));
+ 
+        zoomPercentLabel = new JLabel("100%");
+        zoomPercentLabel.setForeground(new Color(180, 180, 180));
+        zoomPercentLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        zoomPercentLabel.setPreferredSize(new Dimension(40, 16));
+        zoomPercentLabel.setHorizontalAlignment(SwingConstants.LEFT);
+        zoomPercentLabel.setToolTipText("Double-click the slider to reset to 100%");
+        
         JLabel zoomLabel = new JLabel("Zoom:");
         zoomLabel.setForeground(new Color(180, 180, 180));
-        zoomLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        zoomLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
         centre.add(zoomLabel);
         centre.add(zoomOutBtn);
         centre.add(zoomSlider);
         centre.add(zoomInBtn);
-
+        centre.add(zoomPercentLabel);
+ 
+        // --- right: navigation ---
         JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         right.setOpaque(false);
-        prevBtn = iconButton("←");
+ 
+        prevBtn = iconButton("<-");
         prevBtn.addActionListener(e -> goToPage(currentPage - 1));
-        pageField = new JTextField("0",4);
+ 
+        pageField = new JTextField("0", 4);
         pageField.setHorizontalAlignment(JTextField.CENTER);
         pageField.setBackground(new Color(60, 60, 65));
         pageField.setForeground(Color.WHITE);
         pageField.setCaretColor(Color.WHITE);
-        pageField.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createLineBorder(new Color(90,90,95)),
-            new EmptyBorder(2,4,2,4)));
-        pageField.setFont(new Font("Segoe UI", Font.PLAIN, 12));   
+        pageField.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(new Color(90, 90, 95)), new EmptyBorder(2, 4, 2, 4)));
+        pageField.setFont(new Font("SansSerif", Font.PLAIN, 12));
         pageField.addActionListener(e -> jumpToPage());
+ 
         pageLabel = new JLabel("/0");
-        pageLabel.setForeground(new Color(180,180,180));
-        pageLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
-        nextBtn = iconButton("→");
+        pageLabel.setForeground(new Color(180, 180, 180));
+        pageLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
+ 
+        nextBtn = iconButton(">");
         nextBtn.addActionListener(e -> goToPage(currentPage + 1));
+ 
         right.add(prevBtn);
         right.add(pageField);
         right.add(pageLabel);
         right.add(nextBtn);
-        
-        toolbar.add(left, BorderLayout.WEST);
+ 
+        toolbar.add(left,   BorderLayout.WEST);
         toolbar.add(centre, BorderLayout.CENTER);
-        toolbar.add(right, BorderLayout.EAST);
+        toolbar.add(right,  BorderLayout.EAST);
         return toolbar;
     }
 
@@ -132,6 +264,9 @@ public class PDFReaderApp extends JFrame
     {
         pagePanel = new PDFPagePanel();
         pagePanel.setBackground(CANVAS_BG);
+        pagePanel.setCursor(Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR));
+        setUpDragToScroll(pagePanel);
+
         scrollPane = new JScrollPane(pagePanel);
         scrollPane.setBackground(CANVAS_BG);
         scrollPane.getViewport().setBackground(CANVAS_BG);
@@ -150,6 +285,40 @@ public class PDFReaderApp extends JFrame
         return scrollPane;
     }
 
+    private void setUpDragToScroll(JComponent target)
+    {
+        final Point[] dragOrigin = {null};
+        target.addMouseListener(new MouseAdapter() 
+        {
+            public void mousePressed(MouseEvent e)
+            {
+                dragOrigin[0] = e.getPoint();
+            }
+            public void mouseReleased(MouseEvent e)
+            {
+                dragOrigin[0] = null;
+            }
+        });
+        target.addMouseMotionListener(new MouseMotionAdapter()
+        {
+            public void mouseDragged(MouseEvent e)
+            {
+                if(dragOrigin[0] == null)
+                {
+                    return;
+                }
+
+                JScrollBar h = scrollPane.getHorizontalScrollBar();
+                JScrollBar v = scrollPane.getVerticalScrollBar();
+                int dx = dragOrigin[0].x - e.getX();
+                int dy = dragOrigin[0].y - e.getY();
+                h.setValue(h.getValue() + dx);
+                v.setValue(v.getValue() + dy);
+
+                dragOrigin[0] = e.getPoint();
+            }
+        });
+    }
     private JPanel buildStatusBar()
     {
         JPanel bar = new JPanel(new BorderLayout(10,0));
@@ -157,12 +326,15 @@ public class PDFReaderApp extends JFrame
         bar.setBorder(new EmptyBorder(4, 10, 4,10));
         JLabel hint = new JLabel("Ctrl + Scroll to zoom |  ← → to navigate  | Drag and drop a PDF file");
         hint.setForeground(new Color(130,130,130));
-        hint.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+        hint.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        
         progressBar = new JProgressBar();
         progressBar.setPreferredSize(new Dimension(140, 14));
         progressBar.setVisible(false);
         progressBar.setBackground(new Color(50, 50, 54));
         progressBar.setForeground(ACCENT);
+        progressBar.setStringPainted(true);
+
         bar.add(hint, BorderLayout.WEST);
         bar.add(progressBar, BorderLayout.EAST);
         return bar;
@@ -175,7 +347,7 @@ public class PDFReaderApp extends JFrame
         btn.setForeground(BTN_FG);
         btn.setFocusPainted(false);
         btn.setBorderPainted(false);
-        btn.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        btn.setFont(new Font("SansSerif", Font.PLAIN, 12));
         btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         btn.setBorder(new EmptyBorder(6, 14, 6, 14));
         btn.addMouseListener(hoverEffect(btn, bg, bg.brighter()));
@@ -185,15 +357,38 @@ public class PDFReaderApp extends JFrame
     private JButton iconButton(String text)
     {
         JButton btn = new JButton(text);
-        btn.setBackground(new Color(70,70,75));
+        Color base = new Color(70,70,75);
+        btn.setBackground(base);
         btn.setForeground(BTN_FG);
         btn.setFocusPainted(false);
         btn.setBorderPainted(false);
-        btn.setFont(new Font("Segoe UI", Font.BOLD, 13));
-        btn.setPreferredSize(new Dimension(32, 28));
-        Color base = new Color(70,70,75);
+        btn.setFont(crossPlatformIconFont(13));
+        btn.setPreferredSize(new Dimension(36, 28));
         btn.addMouseListener(hoverEffect(btn, base, new Color(90, 90, 95)));
         return btn;
+    }
+
+    private static Font crossPlatformIconFont(int size)
+    {
+        String testGlyphs = "\u2190\u2192+-";
+        String[] candidates = {
+            "SansSerif Symbol", 
+            "Apple Symbols",
+            "Arial Unicode MS", 
+            "Noto Sans Symbols", 
+            "Symbola", 
+            "DejaVu Sans"
+        };
+
+        for(String name : candidates)
+        {
+            Font font = new Font(name, Font.BOLD, size);
+            if(font.canDisplayUpTo(testGlyphs) == -1)
+            {
+                return font;
+            }
+        }
+        return new Font("Dialog", Font.BOLD, size);
     }
 
     private MouseAdapter hoverEffect(JButton btn, Color normal, Color hover)
@@ -219,12 +414,14 @@ public class PDFReaderApp extends JFrame
                     { 
                         return false;
                     }
-                switch (e.getID())
+                switch (e.getKeyCode())
                 {
-                    case KeyEvent.VK_LEFT: case KeyEvent.VK_PAGE_UP:
+                    case KeyEvent.VK_LEFT: 
+                    case KeyEvent.VK_PAGE_UP:
                         goToPage(currentPage - 1);
                         return true;
-                    case KeyEvent.VK_RIGHT: case KeyEvent.VK_PAGE_DOWN:
+                    case KeyEvent.VK_RIGHT: 
+                    case KeyEvent.VK_PAGE_DOWN:
                         goToPage(currentPage + 1);
                         return true;
                     case KeyEvent.VK_HOME:
@@ -242,11 +439,6 @@ public class PDFReaderApp extends JFrame
         );
     }
 
-    private void setupDragAndDrop()
-    {
-        //setTransferHandler(new PDFDropHandler(file -> openPDF(file)));
-    }
-
     private void openFile()
     {
         JFileChooser chooser = new JFileChooser();
@@ -262,7 +454,10 @@ public class PDFReaderApp extends JFrame
     {
        progressBar.setVisible(true);
        progressBar.setIndeterminate(true);
+       progressBar.setString("Loading PDF...");
        setTitle("PDF Reader - Loading");
+       ocrStatusLabel.setVisible(false);
+
        SwingWorker<PDDocument, Void> worker = new SwingWorker<>()
        {
             @Override protected PDDocument doInBackground() throws Exception
@@ -275,20 +470,25 @@ public class PDFReaderApp extends JFrame
               progressBar.setVisible(false);
               try
               {
-                if(pdfDocument != null)
-                {
-                    pdfDocument.close();
-                    pdfRenderer = null;
-                }
+               if (pdfDocument != null)
+               { 
+                pdfDocument.close(); 
+                pdfRenderer = null; 
+               }
+
                 pdfDocument = get();
                 pdfRenderer = new PDFRenderer(pdfDocument);
                 currentPage = 0;
-                zoomLevel = 1.0f;
+                zoomLevel   = calcFitToWidthZoom();
                 zoomSlider.setValue(100);
                 fileLabel.setText(file.getName());
-                setTitle("PDF Reader - " + file.getName());
+                setTitle("PDF Reader -" + file.getName());
                 updateControls();
-                renderCurrentPage();
+ 
+                new Thread(() -> {
+                    analysePages();
+                    SwingUtilities.invokeLater(() -> renderCurrentPage());
+                }, "pdf-analyser").start();
               } catch (Exception ex)
               {
                 showError("Failed to load PDF: ", ex);
@@ -296,7 +496,79 @@ public class PDFReaderApp extends JFrame
               }
             }
        };
-          worker.execute();
+        worker.execute();
+    }
+
+    private void exportToCsv()
+    {
+        if(pdfDocument == null)
+        {
+            return;
+        }
+
+
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Save CSV File");
+        chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("CSV Files (*.CSV)", "csv"));
+        
+        String suggested = fileLabel.getText().replaceAll("(?i)\\.pdf$", "") + ".csv";
+        chooser.setSelectedFile(new File(suggested));
+
+        if(chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION)
+        {
+            return;
+        }
+
+        File dest = chooser.getSelectedFile();
+        if(!dest.getName().toLowerCase().endsWith(".csv"))
+        {
+            dest = new File(dest.getParentFile(), dest.getName() + ".csv");
+        }
+
+        final File finalDest = dest;
+
+        exportCsvBtn.setEnabled(false);
+        progressBar.setVisible(true);
+        progressBar.setIndeterminate(true);
+        progressBar.setValue(0);
+        progressBar.setString("Exporting to CSV..." + pdfDocument.getNumberOfPages());
+        progressBar.setForeground(CSV_ACCENT);   
+        
+        final int total = pdfDocument.getNumberOfPages();
+
+        SwingWorker<Void, Integer> worker = new SwingWorker<>()
+        {
+            @Override protected Void doInBackground() throws Exception
+            {
+                cvsExporter.export(pdfDocument, pdfRenderer, finalDest, (current, t) -> publish(current));
+                return null;
+            }
+
+            @Override protected void process(java.util.List<Integer> chunks)
+            {
+               int latest = chunks.get(chunks.size() - 1);
+               int pot = (int) ((latest / (float) total) * 100);
+               progressBar.setValue(pot);
+               progressBar.setString(String.format("Exporting to CSV... %d / %d", latest, total));
+            }
+
+            @Override protected void done()
+            {
+                exportCsvBtn.setEnabled(true);
+                progressBar.setVisible(false);
+                progressBar.setForeground(ACCENT);
+                try
+                {
+                    get();
+                    JOptionPane.showMessageDialog(PDFReaderApp.this, "CSV export completed successfully to " + finalDest.getAbsolutePath(), "Export Complete", JOptionPane.INFORMATION_MESSAGE);
+                }
+                catch(Exception ex)
+                {
+                    showError("Failed to export CSV: ", ex);
+                }
+            }
+        };
+        worker.execute();
     }
 
     private void goToPage(int page)
@@ -306,7 +578,7 @@ public class PDFReaderApp extends JFrame
             return;
         }
         int total = pdfDocument.getNumberOfPages();
-        if(page >= 0 && page < total)
+        if(page < 0 && page >= total)
         {
             return;
         }
@@ -324,9 +596,9 @@ public class PDFReaderApp extends JFrame
         }
         try
         {
-            int page = Integer.parseInt(pageField.getText().trim()) - 1;
-            goToPage(page);
-        } catch (NumberFormatException ex)
+            goToPage(Integer.parseInt(pageField.getText().trim()) - 1);
+        } 
+        catch (NumberFormatException ex)
         {
             updateControls();
         }
@@ -341,38 +613,122 @@ public class PDFReaderApp extends JFrame
        }
        zoomLevel = newZoom;
        zoomSlider.setValue(Math.round(zoomLevel * 100));
+       updateZoomLabel();
        renderCurrentPage();
     }
 
+    private void resetZoom()
+    {
+        zoomLevel = 1.0f;
+        zoomSlider.setValue(100);
+        updateZoomLabel();
+        renderCurrentPage();
+    }
+
+    private void updateZoomLabel()
+    {
+        if(zoomPercentLabel != null)
+        {
+            zoomPercentLabel.setText(Math.round(zoomLevel *100) + "%");
+        }
+    }
+
+    private float calcFitToWidthZoom()
+    {
+        if (pdfDocument == null)
+        {
+             return 1.0f;
+        }
+
+        try
+        {
+            org.apache.pdfbox.pdmodel.PDPage page = pdfDocument.getPage(0);
+            float pageWidthPt = page.getMediaBox().getWidth(); 
+            int viewportWidth = scrollPane.getViewport().getWidth();
+
+            if (viewportWidth <= 0)
+            {
+                viewportWidth = scrollPane.getPreferredSize().width;
+            }
+            int margin = 48;
+            float fit = (viewportWidth - margin) / pageWidthPt;
+            return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, fit));
+        }
+        catch (Exception ex)
+        {
+            return 1.0f;
+        }
+    }
     private void renderCurrentPage()
     {
         if(pdfDocument == null || pdfRenderer == null)
         {
             return;
         }
+
         progressBar.setVisible(true);
         progressBar.setIndeterminate(true);
-        SwingWorker<Image, Void> worker = new SwingWorker<>()
+        progressBar.setString("Rendering page...");
+
+        final int pageIndex = currentPage;
+        final float zoom = zoomLevel;
+        final boolean scanned = isScannedPage(pageIndex);
+
+        SwingWorker<RenderResult, Void> worker = new SwingWorker<>()
         {
-            @Override protected Image doInBackground() throws Exception
-            {
-                return pdfRenderer.renderImage(currentPage, zoomLevel);
+            @Override protected RenderResult doInBackground() throws Exception
+            {  
+                BufferedImage image = pdfRenderer.renderImage(pageIndex, zoom);
+                String ocrText = (scanned && ocrEnabled) ? runOCR(image) : null;
+                return new RenderResult(image, ocrText, scanned);
             }
+
            @Override protected void done() 
            {
-                progressBar.setVisible(false);
-                try 
-                {
-                    pagePanel.setImage(get());
-                    pagePanel.revalidate();
-                    pagePanel.repaint();
-                } catch (Exception ex)
-                {
-                    showError("Failed to render page", ex);
-                }
+            progressBar.setVisible(false);
+            try
+            {
+                RenderResult result = get();
+                pagePanel.setImage(result.image);
+                pagePanel.setOcrText(result.ocrText);
+                pagePanel.revalidate();
+                pagePanel.repaint();
+                updateOcrBadge(result);
+            }
+            catch(Exception ex)
+            {
+                showError("Failed to render page: ", ex);
+            }
             }
         };
         worker.execute();
+    }
+
+
+    private void updateOcrBadge(RenderResult result)
+    {
+        if(!result.isScanned)
+        {
+            ocrStatusLabel.setVisible(false);
+            return;
+        } 
+        ocrStatusLabel.setVisible(true);
+
+        if(result.ocrText != null && !result.ocrText.isBlank())
+        {
+            ocrStatusLabel.setText("OCR");
+            ocrStatusLabel.setBackground(OCR_ACCENT);
+            ocrStatusLabel.setForeground(Color.WHITE);
+            ocrStatusLabel.setToolTipText("This page is scanned - Text extracted via OCR");
+        }
+
+        else
+        {
+            ocrStatusLabel.setText("Scanned - no OCR");
+            ocrStatusLabel.setBackground(new Color(80,80,40));
+            ocrStatusLabel.setForeground(Color.WHITE);
+            ocrStatusLabel.setToolTipText("Scanned page - OCR is disabled");
+        }
     }
 
     private void updateControls()
@@ -385,14 +741,22 @@ public class PDFReaderApp extends JFrame
         zoomOutBtn.setEnabled(hasDoc && zoomLevel > ZOOM_MIN);
         pageField.setEnabled(hasDoc);
         zoomSlider.setEnabled(hasDoc);
+        exportCsvBtn.setEnabled(hasDoc);
+
         if(hasDoc)
         {
             pageField.setText(String.valueOf(currentPage + 1));
             pageLabel.setText("/" + total);
-        } else
+        }
+        else
         {
             pageField.setText("0");
             pageLabel.setText("/0");
+
+            if(zoomPercentLabel != null)
+            {
+                zoomPercentLabel.setText("100%");
+            }
         }
     }
 
@@ -401,14 +765,28 @@ public class PDFReaderApp extends JFrame
         JOptionPane.showMessageDialog(this, message + "\n" + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
     }
 
+    private static class RenderResult
+    {
+        final BufferedImage image;
+        final String ocrText;
+        final boolean isScanned;
+
+        RenderResult(BufferedImage image, String ocrText, boolean isScanned)
+        {
+            this.image = image;
+            this.ocrText = ocrText;
+            this.isScanned = isScanned;
+        }
+    }
     public static void main(String[] args)
     {
         SwingUtilities.invokeLater(() -> {
-            try{
-                UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
-            } catch (Exception ignored)
+            try
             {
-                // Ignore and use default
+                UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+            } 
+            catch (Exception ignored)
+            {
             }
             new PDFReaderApp();
         });
