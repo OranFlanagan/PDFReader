@@ -5,9 +5,12 @@ import javax.swing.border.EmptyBorder;
 import javax.swing.event.ChangeEvent;
 
 import java.awt.*;
+import java.awt.datatransfer.*;
+import java.awt.dnd.*;
 import java.awt.event.*;
 import java.awt.image.BufferedImage;
 import java.io.File;
+import java.util.List;
 import org.apache.pdfbox.Loader;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -59,6 +62,7 @@ public class PDFReaderApp extends JFrame
     private PDFtoCsvExporter csvExporter;
 
     private int loadingCount = 0;
+    private boolean dropHovering = false;
 
     private static final float ZOOM_STEP = 0.25f;
     private static final float ZOOM_MIN  = 0.25f;
@@ -122,6 +126,7 @@ public class PDFReaderApp extends JFrame
             ocrEnabled = false;
         }
     }
+
     private boolean isScannedPage(PdfTab tab, int pageIndex)
     {
         return tab.pageIsScanned != null && pageIndex < tab.pageIsScanned.length && tab.pageIsScanned[pageIndex];
@@ -129,7 +134,10 @@ public class PDFReaderApp extends JFrame
 
     private void analysePages(PdfTab tab)
     {
-       if (!tab.hasDocument()) return;
+        if (!tab.hasDocument())
+        {
+            return;
+        }
         int total = tab.document.getNumberOfPages();
         tab.pageIsScanned = new boolean[total];
         try
@@ -174,6 +182,7 @@ public class PDFReaderApp extends JFrame
         add(buildTabArea(),   BorderLayout.CENTER);
         add(buildStatusBar(), BorderLayout.SOUTH);
         setupKeyBindings();
+        setupDropTarget();
         updateControls();
     }
 
@@ -353,7 +362,7 @@ public class PDFReaderApp extends JFrame
 
     private void setUpDragToScroll(PdfTab tab)
     {
-        final Point[] dragOrigin = {null};
+        final Point[] dragOrigin = { null };
         tab.pagePanel.addMouseListener(new MouseAdapter() 
         {
             public void mousePressed(MouseEvent e)
@@ -384,6 +393,7 @@ public class PDFReaderApp extends JFrame
             }
         });
     }
+
     private JPanel buildStatusBar()
     {
         JPanel bar = new JPanel(new BorderLayout(10,0));
@@ -469,6 +479,130 @@ public class PDFReaderApp extends JFrame
                 btn.setBackground(normal);
             }
         };
+    }
+
+    private void setupDropTarget()
+    {
+        JPanel glassPane = new JPanel()
+        {
+            @Override
+            protected void paintComponent(Graphics g)
+            {
+                if (!dropHovering)
+                {
+                    return;
+                }
+                Graphics2D g2 = (Graphics2D) g.create();
+                
+                g2.setColor(new Color(0, 120, 215, 55));
+                g2.fillRect(0, 0, getWidth(), getHeight());
+                
+                g2.setColor(new Color(0, 120, 215, 200));
+                g2.setStroke(new BasicStroke(2.5f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 10f, new float[]{10f, 6f}, 0f));
+                g2.drawRect(6, 6, getWidth() - 12, getHeight() - 12);
+                
+                g2.setColor(Color.WHITE);
+                g2.setFont(new Font("SansSerif", Font.BOLD, 18));
+                FontMetrics fm = g2.getFontMetrics();
+                String msg = "Drop PDF(s) to open";
+                int tx = (getWidth()  - fm.stringWidth(msg)) / 2;
+                int ty = (getHeight() + fm.getAscent())       / 2;
+                
+                g2.setColor(new Color(0, 0, 0, 120));
+                g2.drawString(msg, tx + 1, ty + 1);
+                g2.setColor(Color.WHITE);
+                g2.drawString(msg, tx, ty);
+                g2.dispose();
+            }
+        };
+        glassPane.setOpaque(false);
+        glassPane.setVisible(true);
+        setGlassPane(glassPane);
+ 
+        new DropTarget(this, DnDConstants.ACTION_COPY, new DropTargetAdapter()
+        {
+            @Override
+            public void dragEnter(DropTargetDragEvent e)
+            {
+                if (isPdfDrag(e.getTransferable()))
+                {
+                    e.acceptDrag(DnDConstants.ACTION_COPY);
+                    dropHovering = true;
+                    glassPane.repaint();
+                }
+                else
+                {
+                    e.rejectDrag();
+                }
+            }
+ 
+            @Override
+            public void dragOver(DropTargetDragEvent e)
+            {
+                if (isPdfDrag(e.getTransferable()))
+                {
+                    e.acceptDrag(DnDConstants.ACTION_COPY);
+                }
+                else
+                {
+                    e.rejectDrag();
+                }
+            }
+ 
+            @Override
+            public void dragExit(DropTargetEvent e)
+            {
+                dropHovering = false;
+                glassPane.repaint();
+            }
+ 
+            @Override
+            public void drop(DropTargetDropEvent e)
+            {
+                dropHovering = false;
+                glassPane.repaint();
+ 
+                try
+                {
+                    e.acceptDrop(DnDConstants.ACTION_COPY);
+                    Transferable t = e.getTransferable();
+                    if (t.isDataFlavorSupported(DataFlavor.javaFileListFlavor))
+                    {
+                        @SuppressWarnings("unchecked")
+                        List<File> files = (List<File>) t.getTransferData(DataFlavor.javaFileListFlavor);
+                        for (File file : files)
+                        {
+                            if (file.getName().toLowerCase().endsWith(".pdf"))
+                            {
+                                openPDF(file);
+                            }
+                            else
+                            {
+                                showNonPdfWarning(file.getName());
+                            }
+                        }
+                    }
+                    e.dropComplete(true);
+                }
+                catch (Exception ex)
+                {
+                    e.dropComplete(false);
+                    showError("Drop failed", ex);
+                }
+            }
+ 
+            /** Returns true only if the drag payload contains at least one file. */
+            private boolean isPdfDrag(Transferable t)
+            {
+                return t.isDataFlavorSupported(DataFlavor.javaFileListFlavor);
+            }
+        }, true);
+    }
+ 
+    /** Shows a brief non-blocking warning when a non-PDF file is dropped. */
+    private void showNonPdfWarning(String filename)
+    {
+        JOptionPane.showMessageDialog( PDFReaderApp.this, "\"" + filename + "\" is not a PDF file and was skipped.", "Unsupported file", JOptionPane.WARNING_MESSAGE);
     }
 
     private void setupKeyBindings()
