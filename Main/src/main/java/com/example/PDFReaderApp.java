@@ -178,8 +178,8 @@ public class PDFReaderApp extends JFrame
     {
         setLayout(new BorderLayout());
         getContentPane().setBackground(CANVAS_BG);
-        add(buildToolbar(),   BorderLayout.NORTH);
-        add(buildTabArea(),   BorderLayout.CENTER);
+        add(buildToolbar(), BorderLayout.NORTH);
+        add(buildTabArea(), BorderLayout.CENTER);
         add(buildStatusBar(), BorderLayout.SOUTH);
         setupKeyBindings();
         setupDropTarget();
@@ -849,7 +849,10 @@ public class PDFReaderApp extends JFrame
         chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("CSV Files (*.csv)", "csv"));
         chooser.setSelectedFile(new File(tab.file.getName().replaceAll("(?i)\\.pdf$", "") + ".csv"));
  
-        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
+        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION)
+        {
+            return;
+        }
  
         File dest = chooser.getSelectedFile();
         if (!dest.getName().toLowerCase().endsWith(".csv"))
