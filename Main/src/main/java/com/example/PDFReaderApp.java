@@ -18,6 +18,7 @@ import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.pdfbox.rendering.PDFRenderer;
 import net.sourceforge.tess4j.Tesseract;
 import net.sourceforge.tess4j.TesseractException;
+import com.example.PDFtoCSVExporter;
  
  
 public class PDFReaderApp extends JFrame
@@ -59,7 +60,7 @@ public class PDFReaderApp extends JFrame
 
     private Tesseract tesseract;
     private boolean ocrEnabled  = false;
-    private PDFtoCsvExporter csvExporter;
+    private PDFtoCSVExporter csvExporter;
 
     private int loadingCount = 0;
     private boolean dropHovering = false;
@@ -85,7 +86,7 @@ public class PDFReaderApp extends JFrame
         setMinimumSize(new Dimension(800,600));
         setPreferredSize(new Dimension(1100,800));
         initTesseract();
-        csvExporter = new PDFtoCsvExporter(tesseract);
+        csvExporter = new PDFtoCSVExporter(tesseract);
         initUI();
         pack();
         setLocationRelativeTo(null);
@@ -218,7 +219,7 @@ public class PDFReaderApp extends JFrame
         JPanel centre = new JPanel(new FlowLayout(FlowLayout.CENTER, 6, 0));
         centre.setOpaque(false);
  
-        zoomOutBtn = iconButton("-");
+        zoomOutBtn = iconButton("−");
         zoomOutBtn.setToolTipText("Zoom out");
         zoomOutBtn.addActionListener(e -> adjustZoom(-ZOOM_STEP));
  
@@ -241,7 +242,7 @@ public class PDFReaderApp extends JFrame
  
         zoomSlider.addMouseListener(new MouseAdapter() 
         {
-            public void mouseCLicked(MouseEvent e)
+            public void mouseClicked(MouseEvent e)
             {
                 if(e.getClickCount() == 2)
                 {
@@ -256,7 +257,7 @@ public class PDFReaderApp extends JFrame
  
         zoomPercentLabel = new JLabel("100%");
         zoomPercentLabel.setForeground(new Color(180, 180, 180));
-        zoomPercentLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        zoomPercentLabel.setFont(new Font("SansSerif", Font.PLAIN, 13));
         zoomPercentLabel.setPreferredSize(new Dimension(40, 16));
         zoomPercentLabel.setHorizontalAlignment(SwingConstants.LEFT);
         zoomPercentLabel.setToolTipText("Double-click the slider to reset to 100%");
@@ -274,7 +275,7 @@ public class PDFReaderApp extends JFrame
         JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         right.setOpaque(false);
  
-        prevBtn = iconButton("<-");
+        prevBtn = iconButton("←");
         prevBtn.setToolTipText("Previous Page");
         prevBtn.addActionListener(e -> {
             PdfTab t = activeTab();
@@ -297,7 +298,7 @@ public class PDFReaderApp extends JFrame
         pageLabel.setForeground(new Color(180, 180, 180));
         pageLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
  
-        nextBtn = iconButton(">");
+        nextBtn = iconButton("→");
         nextBtn.setToolTipText("Next Page");
         nextBtn.addActionListener(e -> {
             PdfTab t = activeTab();
@@ -437,34 +438,12 @@ public class PDFReaderApp extends JFrame
         btn.setForeground(BTN_FG);
         btn.setFocusPainted(false);
         btn.setBorderPainted(false);
-        btn.setFont(crossPlatformIconFont(13));
+        btn.setFont(new Font("SansSerif", Font.BOLD, 13));
         btn.setPreferredSize(new Dimension(36, 28));
         btn.addMouseListener(hoverEffect(btn, base, new Color(90, 90, 95)));
         return btn;
     }
 
-    private static Font crossPlatformIconFont(int size)
-    {
-        String testGlyphs = "\u2190\u2192+-";
-        String[] candidates = {
-            "SansSerif Symbol", 
-            "Apple Symbols",
-            "Arial Unicode MS", 
-            "Noto Sans Symbols", 
-            "Symbola", 
-            "DejaVu Sans"
-        };
-
-        for(String name : candidates)
-        {
-            Font f = new Font(name, Font.BOLD, size);
-            if(f.canDisplayUpTo(testGlyphs) == -1)
-            {
-                return f;
-            }
-        }
-        return new Font("Dialog", Font.BOLD, size);
-    }
 
     private MouseAdapter hoverEffect(JButton btn, Color normal, Color hover)
     {
@@ -874,7 +853,7 @@ public class PDFReaderApp extends JFrame
         {
             @Override protected Void doInBackground() throws Exception
             {
-                csvExporter.export(tab.document, tab.renderer, finalDest, (cur, t) -> publish(cur));
+                csvExporter.export(tab.document, tab.renderer, finalDest, (cur, total) -> publish(cur));
                 return null;
             }
             @Override protected void process(java.util.List<Integer> chunks)
@@ -909,7 +888,7 @@ public class PDFReaderApp extends JFrame
             return;
         }
         int total = tab.document.getNumberOfPages();
-        if(page < 0 && page >= total)
+        if(page < 0 || page >= total)
         {
             return;
         }
@@ -1119,7 +1098,7 @@ public class PDFReaderApp extends JFrame
         }
     }
 
-    private static class PDFtoCsvExporter
+    /*private static class PDFtoCsvExporter
     {
         private final Tesseract tesseract;
 
@@ -1171,7 +1150,7 @@ public class PDFReaderApp extends JFrame
                 }
             }
         }
-    }
+    }*/
 
     public static void main(String[] args)
     {
